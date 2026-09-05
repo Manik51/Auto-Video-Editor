@@ -1,0 +1,22 @@
+{
+  "name": "Cinematic Film",
+  "aspect_ratio": "16:9",
+  "resolution": [1920, 1080],
+  "color_lut": "cinematic_orange_teal.cube",
+  "silence_threshold_db": -42,
+  "min_scene_duration": 2.0,
+  "transition_style": "cross_dissolve",
+  "caption_style": "bottom_white_outline",
+  "audio_target_lufs": -14,
+  "effects": [
+    "ken_burns",
+    "speed_ramp",
+    "film_grain",
+    "vignette"
+  ],
+  "export_crf": 17,
+  "export_preset": "slow",
+  "motion_threshold": 0.04,
+  "keep_scene_ratio": 0.8,
+  "caption_font_size": 48
+}

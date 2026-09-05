@@ -1,0 +1,21 @@
+{
+  "name": "Podcast",
+  "aspect_ratio": "16:9",
+  "resolution": [1920, 1080],
+  "color_lut": "warm_golden.cube",
+  "silence_threshold_db": -36,
+  "min_scene_duration": 1.5,
+  "transition_style": "cross_dissolve",
+  "caption_style": "bottom_white_outline",
+  "audio_target_lufs": -14,
+  "voice_eq_boost": true,
+  "noise_reduction": true,
+  "effects": [
+    "ken_burns"
+  ],
+  "export_crf": 19,
+  "export_preset": "medium",
+  "motion_threshold": 0.02,
+  "keep_scene_ratio": 0.9,
+  "caption_font_size": 48
+}

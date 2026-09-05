@@ -1,0 +1,23 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Output media & logs
+output/
+*.mp4
+*.wav
+*.trf
+processing_log.txt
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Environments
+env/
+venv/
+ENV/
+
+# Temporary files
+temp/
+tmp/

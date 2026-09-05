@@ -1,0 +1,23 @@
+{
+  "name": "Music Video",
+  "aspect_ratio": "16:9",
+  "resolution": [1920, 1080],
+  "color_lut": "cold_blue.cube",
+  "silence_threshold_db": -50,
+  "min_scene_duration": 0.8,
+  "transition_style": "whip_pan_blur",
+  "caption_style": "bottom_white_outline",
+  "audio_target_lufs": -14,
+  "beat_sync": true,
+  "beat_drop_zoom": true,
+  "effects": [
+    "speed_ramp",
+    "zoom_punch",
+    "glitch_transition"
+  ],
+  "export_crf": 18,
+  "export_preset": "slow",
+  "motion_threshold": 0.06,
+  "keep_scene_ratio": 0.85,
+  "caption_font_size": 48
+}

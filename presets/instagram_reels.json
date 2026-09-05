@@ -1,0 +1,21 @@
+{
+  "name": "Instagram Reels",
+  "aspect_ratio": "9:16",
+  "resolution": [1080, 1920],
+  "color_lut": "cinematic_orange_teal.cube",
+  "silence_threshold_db": -38,
+  "min_scene_duration": 1.0,
+  "max_duration_seconds": 90,
+  "transition_style": "glitch_transition",
+  "caption_style": "bottom_white_outline",
+  "audio_target_lufs": -14,
+  "effects": [
+    "auto_reframe_9_16",
+    "zoom_punch"
+  ],
+  "export_crf": 18,
+  "export_preset": "slow",
+  "motion_threshold": 0.08,
+  "keep_scene_ratio": 0.7,
+  "caption_font_size": 56
+}

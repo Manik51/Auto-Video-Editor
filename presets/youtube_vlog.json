@@ -1,0 +1,20 @@
+{
+  "name": "YouTube Vlog",
+  "aspect_ratio": "16:9",
+  "resolution": [1920, 1080],
+  "color_lut": "warm_golden.cube",
+  "silence_threshold_db": -40,
+  "min_scene_duration": 1.5,
+  "transition_style": "cross_dissolve",
+  "caption_style": "bottom_white_outline",
+  "audio_target_lufs": -14,
+  "effects": [
+    "ken_burns",
+    "zoom_punch"
+  ],
+  "export_crf": 18,
+  "export_preset": "slow",
+  "motion_threshold": 0.05,
+  "keep_scene_ratio": 0.7,
+  "caption_font_size": 48
+}
