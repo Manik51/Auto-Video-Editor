@@ -59,21 +59,26 @@ class SceneDetector:
             print(f"⚠️ PySceneDetect notice: {e}. Using OpenCV fallback scene splitter...")
             scenes = self._fallback_detect_scenes(video_path)
 
-        # If no cuts found, treat the entire video as one or more regular blocks
-        if not scenes:
+        # If no cuts found or only 1 single continuous shot longer than 4.5s, create dynamic montage scenes
+        if len(scenes) <= 1:
             cap = cv2.VideoCapture(video_path)
             fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
             total_frames = cap.get(cv2.CAP_PROP_FRAME_COUNT)
             duration = total_frames / fps if fps > 0 else 0.0
             cap.release()
-            if duration > 0:
-                # Divide into 5-second segments if no cuts detected
-                step = 5.0
+            if duration > 4.5:
+                scenes = []
+                # Paced cuts between 3.0s and 4.5s for dynamic video editing
+                step = max(3.0, min(4.5, duration / max(2, int(duration // 3.8))))
                 curr = 0.0
                 while curr < duration:
                     nxt = min(curr + step, duration)
+                    if (duration - nxt) < 2.0:
+                        nxt = duration
                     scenes.append((curr, nxt))
                     curr = nxt
+                    if curr >= duration:
+                        break
 
         return scenes
 

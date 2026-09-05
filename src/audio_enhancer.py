@@ -43,9 +43,19 @@ class AudioEnhancer:
                     return np.column_stack([ch1, ch2])
             else:
                 return nr.reduce_noise(y=audio_data, sr=sample_rate, stationary=True, prop_decrease=0.8)
-        except Exception as e:
-            print(f"⚠️ Noise reduction notice: {e}. Keeping raw audio.")
-            return audio_data
+        except Exception:
+            # High-performance audio sweetening fallback using Scipy Butterworth High-Pass
+            try:
+                b_hp, a_hp = scipy.signal.butter(2, 80.0 / (sample_rate / 2.0), btype='highpass')
+                if audio_data.ndim == 2:
+                    if audio_data.shape[0] == 2:
+                        return np.vstack([scipy.signal.lfilter(b_hp, a_hp, audio_data[0]), scipy.signal.lfilter(b_hp, a_hp, audio_data[1])])
+                    else:
+                        return np.column_stack([scipy.signal.lfilter(b_hp, a_hp, audio_data[:, 0]), scipy.signal.lfilter(b_hp, a_hp, audio_data[:, 1])])
+                else:
+                    return scipy.signal.lfilter(b_hp, a_hp, audio_data)
+            except Exception:
+                return audio_data
 
     def boost_voice_eq(self, audio_data: np.ndarray, sample_rate: int, boost_db: float = 3.5) -> np.ndarray:
         """
@@ -128,11 +138,23 @@ class AudioEnhancer:
 
             # Resample BGM if sample rates differ
             if bgm_sr != sr:
-                import librosa
-                if bgm_data.ndim == 2:
-                    bgm_data = librosa.resample(bgm_data.T, orig_sr=bgm_sr, target_sr=sr).T
-                else:
-                    bgm_data = librosa.resample(bgm_data, orig_sr=bgm_sr, target_sr=sr)
+                try:
+                    import librosa
+                    if bgm_data.ndim == 2:
+                        bgm_data = librosa.resample(bgm_data.T, orig_sr=bgm_sr, target_sr=sr).T
+                    else:
+                        bgm_data = librosa.resample(bgm_data, orig_sr=bgm_sr, target_sr=sr)
+                except ImportError:
+                    # Robust Scipy interpolation fallback
+                    new_len = int(len(bgm_data) * sr / bgm_sr)
+                    orig_times = np.linspace(0, 1, len(bgm_data))
+                    new_times = np.linspace(0, 1, new_len)
+                    if bgm_data.ndim == 2:
+                        ch0 = np.interp(new_times, orig_times, bgm_data[:, 0])
+                        ch1 = np.interp(new_times, orig_times, bgm_data[:, 1])
+                        bgm_data = np.column_stack([ch0, ch1])
+                    else:
+                        bgm_data = np.interp(new_times, orig_times, bgm_data)
 
             # Convert both to stereo
             if v_data.ndim == 1:

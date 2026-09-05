@@ -7,6 +7,7 @@ Designed with strict fault-tolerance to never crash on optional module errors.
 """
 
 import os
+import subprocess
 import json
 import shutil
 import tempfile
@@ -111,7 +112,8 @@ class VideoPipeline:
             os.makedirs(colab_drive_dir, exist_ok=True)
             dest_dir = colab_drive_dir
         else:
-            dest_dir = os.path.join(os.path.dirname(os.path.abspath(self.input_path)), "output")
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            dest_dir = os.path.join(base_dir, "output")
             os.makedirs(dest_dir, exist_ok=True)
 
         base_name = os.path.splitext(os.path.basename(self.input_path))[0]
@@ -198,11 +200,12 @@ class VideoPipeline:
         self._log(f"✂️ Smart Auto-Cutting: Kept {len(filtered_scenes)} of {num_scenes_detected} scenes.")
 
         # -------------------------------------------------------------
-        # STAGE 3: Removing silence (40%)
+        # STAGE 3: Timeline Assembly & Silence Removal (40%)
         # -------------------------------------------------------------
-        self._update_progress(40.0, "Removing silence and dead air...")
+        self._update_progress(40.0, "Assembling edited cut timeline and removing silence...")
         do_silence = self.options.get("remove_silence", True)
 
+        # 1. If silence intervals exist and silence removal is on:
         if do_silence and audio_data["silent_intervals"]:
             silence_remover = SilenceRemover(padding=0.1, min_silence_duration=0.5)
             clean_intervals = silence_remover.compute_keep_intervals(
@@ -215,12 +218,17 @@ class VideoPipeline:
                 current_video = trimmed_video
                 num_silences_removed = len(audio_data["silent_intervals"])
                 self._log(f"✂️ Removed {num_silences_removed} dead-air intervals.")
-                # Re-extract audio from trimmed video
                 audio_analyzer.extract_audio_wav(current_video, raw_wav)
-            else:
-                self.warnings.append("Silence removal step had an issue; continued with original video timeline.")
-        else:
-            self._log("ℹ️ Skipping silence removal (option disabled or no silence found).")
+        # 2. If it's a long continuous shot or multiple scenes detected, assemble dynamic montage cuts:
+        elif len(filtered_scenes) > 1:
+            self._log(f"🎬 Creating dynamic montage timeline across {len(filtered_scenes)} cut scenes...")
+            silence_remover = SilenceRemover(padding=0.0)
+            montage_video = os.path.join(self.temp_dir, "montage_cuts.mp4")
+            ok = silence_remover.remove_silence(self.input_path, montage_video, filtered_scenes)
+            if ok and os.path.exists(montage_video) and os.path.getsize(montage_video) > 1000:
+                current_video = montage_video
+                audio_analyzer.extract_audio_wav(current_video, raw_wav)
+                self._log(f"  ✅ Dynamic scene pacing assembled ({len(filtered_scenes)} cuts)!")
 
         # -------------------------------------------------------------
         # STAGE 4: Color grading & LUT application (55%)
@@ -237,7 +245,7 @@ class VideoPipeline:
 
         graded_video = os.path.join(self.temp_dir, "color_graded.mp4")
         if do_color:
-            self._log(f"🎨 Applying LUT: {lut_name} (Auto-WB, CLAHE, +15% Sat, Vignette & Film Grain)")
+            self._log(f"🎨 Applying LUT: {lut_name} (Cinematic 3D LUT, Dynamic Film Grain, Contrast & Vignette)")
             graded_ok = False
 
             # FAST PATH: Hardware-accelerated FFmpeg native lut3d filter (runs in 3-5 seconds)
@@ -248,7 +256,13 @@ class VideoPipeline:
                     if ":" in lut_norm:
                         d, r = lut_norm.split(":", 1)
                         lut_norm = f"{d}\\:{r}"
-                    vf_lut = f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2,lut3d=file='{lut_norm}':interp=trilinear,eq=saturation=1.15:contrast=1.10"
+                    vf_lut = (
+                        f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2,"
+                        f"lut3d=file='{lut_norm}':interp=trilinear,"
+                        f"eq=contrast=1.12:brightness=-0.01:saturation=1.18,"
+                        f"vignette=PI/4,"
+                        f"noise=c1s=3:c0s=3:allf=t+u"
+                    )
                     cmd = [
                         ffmpeg_bin, "-y",
                         "-i", current_video,
@@ -320,58 +334,68 @@ class VideoPipeline:
         fx_engine = EffectsEngine()
         is_reels = "reels" in self.preset_data.get("name", "").lower() or self.preset_data.get("aspect_ratio") == "9:16"
         target_res = tuple(self.preset_data.get("resolution", [1920, 1080]))
+        out_w, out_h = (1080, 1920) if is_reels else target_res
+        do_face = self.options.get("face_enhance", False)
 
-        effects_video = os.path.join(self.temp_dir, "effects_applied.mp4")
-        try:
-            cap = cv2.VideoCapture(current_video)
-            fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-            tot_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 1)
+        # FAST-PATH: If not 9:16 Reels and not running GFPGAN face restoration,
+        # bypass OpenCV frame loop to preserve master H.264 pristine quality without lossy mp4v compression
+        if not is_reels and not do_face:
+            self._log("⚡ Video framing matches target format. Preserving pristine master stream quality.")
+        else:
+            effects_video = os.path.join(self.temp_dir, "effects_applied.mp4")
+            try:
+                cap = cv2.VideoCapture(current_video)
+                fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+                tot_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 1)
 
-            out_w, out_h = (1080, 1920) if is_reels else target_res
-            writer = cv2.VideoWriter(effects_video, cv2.VideoWriter_fourcc(*"mp4v"), fps, (out_w, out_h))
+                writer = cv2.VideoWriter(effects_video, cv2.VideoWriter_fourcc(*"mp4v"), fps, (out_w, out_h))
 
-            # Optional GFPGAN Face Enhancer
-            face_enhancer = None
-            if self.options.get("face_enhance", False):
-                try:
-                    face_enhancer = FaceEnhancer()
-                    self._log("✨ Face restoration (GFPGAN) activated for every 5th frame.")
-                except Exception as e:
-                    self.warnings.append(f"GFPGAN could not be started: {e}")
+                # Optional GFPGAN Face Enhancer
+                face_enhancer = None
+                if do_face:
+                    try:
+                        face_enhancer = FaceEnhancer()
+                        self._log("✨ Face restoration (GFPGAN) activated for every 5th frame.")
+                    except Exception as e:
+                        self.warnings.append(f"GFPGAN could not be started: {e}")
 
-            idx = 0
-            while cap.isOpened():
-                ret, frame = cap.read()
-                if not ret:
-                    break
+                idx = 0
+                while cap.isOpened():
+                    ret, frame = cap.read()
+                    if not ret:
+                        break
 
-                # 1. 9:16 Auto-reframe if Reels preset
-                if is_reels:
-                    frame = fx_engine.auto_reframe_9_16(frame, target_resolution=(out_w, out_h))
-                elif (frame.shape[1], frame.shape[0]) != (out_w, out_h):
-                    frame = cv2.resize(frame, (out_w, out_h))
+                    # 1. 9:16 Auto-reframe if Reels preset
+                    if is_reels:
+                        frame = fx_engine.auto_reframe_9_16(frame, target_resolution=(out_w, out_h))
+                    elif (frame.shape[1], frame.shape[0]) != (out_w, out_h):
+                        frame = cv2.resize(frame, (out_w, out_h))
 
-                # 2. Ken Burns slow zoom
-                progress = idx / max(1, tot_frames)
-                frame = fx_engine.apply_ken_burns(frame, progress=progress, start_scale=1.0, end_scale=1.04)
+                    # 2. Ken Burns subtle cinematic zoom
+                    progress = idx / max(1, tot_frames)
+                    frame = fx_engine.apply_ken_burns(frame, progress=progress, start_scale=1.0, end_scale=1.04)
 
-                # 3. GFPGAN Face Enhancement (every 5th frame)
-                if face_enhancer:
-                    if idx % 5 == 0:
-                        frame = face_enhancer.enhance_frame(frame)
+                    # 3. GFPGAN Face Enhancement (every 5th frame)
+                    if face_enhancer:
+                        if idx % 5 == 0:
+                            frame = face_enhancer.enhance_frame(frame)
 
-                writer.write(frame)
-                idx += 1
+                    writer.write(frame)
+                    idx += 1
 
-            cap.release()
-            writer.release()
+                    if idx % 30 == 0:
+                        p = 70.0 + (idx / max(1, tot_frames)) * 9.0
+                        self._update_progress(p, f"Applying visual reframing... frame {idx}/{tot_frames}")
 
-            if os.path.exists(effects_video) and os.path.getsize(effects_video) > 1000:
-                current_video = effects_video
-                self._log(f"  ✅ Dynamic effects and reframing applied across {idx} frames.")
-        except Exception as e:
-            self.warnings.append(f"Effects engine notice: {e}. Kept previous stage video.")
-            self._log(f"⚠️ Effects engine error: {traceback.format_exc()}")
+                cap.release()
+                writer.release()
+
+                if os.path.exists(effects_video) and os.path.getsize(effects_video) > 1000:
+                    current_video = effects_video
+                    self._log(f"  ✅ Dynamic effects and reframing applied across {idx} frames.")
+            except Exception as e:
+                self.warnings.append(f"Effects engine notice: {e}. Kept previous stage video.")
+                self._log(f"⚠️ Effects engine error: {traceback.format_exc()}")
 
         # -------------------------------------------------------------
         # STAGE 6: Audio Enhancement & Captions (80%)
