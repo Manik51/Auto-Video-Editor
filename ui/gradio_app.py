@@ -58,6 +58,7 @@ def process_video(
     video_file,
     preset_name,
     music_file,
+    color_look,
     auto_captions,
     color_grade,
     remove_silence,
@@ -98,6 +99,7 @@ def process_video(
     options = {
         "auto_captions": auto_captions,
         "color_grade": color_grade,
+        "color_look": color_look,
         "remove_silence": remove_silence,
         "face_enhance": face_enhance,
         "beat_sync": beat_sync,
@@ -200,9 +202,21 @@ def create_gradio_ui():
                     label="Export Output Format",
                 )
 
+                color_look_dropdown = gr.Dropdown(
+                    choices=[
+                        "Clean & Crisp (Studio HD)",
+                        "Vibrant Pop (Social Media / Reels)",
+                        "Cinematic Film (Hollywood Style)",
+                        "Warm Golden Hour",
+                        "Original / Natural (Untouched)",
+                    ],
+                    value="Clean & Crisp (Studio HD)",
+                    label="🎨 Color Grading & Look Style",
+                )
+
                 with gr.Row():
                     chk_captions = gr.Checkbox(label="Auto Captions (Whisper)", value=True)
-                    chk_color = gr.Checkbox(label="Color Grade & 3D LUT", value=True)
+                    chk_color = gr.Checkbox(label="Color Grade & Enhance", value=True)
                     chk_silence = gr.Checkbox(label="Remove Dead-Air Silence", value=True)
 
                 with gr.Row():
@@ -240,6 +254,7 @@ def create_gradio_ui():
                 video_input,
                 preset_dropdown,
                 music_input,
+                color_look_dropdown,
                 chk_captions,
                 chk_color,
                 chk_silence,

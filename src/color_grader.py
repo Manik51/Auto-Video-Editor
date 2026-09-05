@@ -111,20 +111,28 @@ class ColorGrader:
         merged_lab = cv2.merge([blended_l, a, b])
         return cv2.cvtColor(merged_lab, cv2.COLOR_LAB2BGR)
 
-    def boost_saturation_contrast(self, frame: np.ndarray, sat_boost: float = 0.15, cont_boost: float = 0.10) -> np.ndarray:
+    def boost_saturation_contrast(self, frame: np.ndarray, sat_boost: float = 0.07, cont_boost: float = 0.04) -> np.ndarray:
         """
-        Saturation boost (+15%) in HSV and Contrast boost (+10%).
+        Subtle natural vibrance boost (+7%) and gentle contrast (+4%) that preserves natural skin tones.
         """
         # 1. Saturation boost
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV).astype(np.float32)
         hsv[:, :, 1] = np.clip(hsv[:, :, 1] * (1.0 + sat_boost), 0, 255)
         bgr = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
 
-        # 2. Contrast boost (1.10x around midpoint 128)
+        # 2. Gentle Contrast boost around midpoint 128
         alpha = 1.0 + cont_boost
         beta = 128 * (1.0 - alpha)
         adjusted = cv2.convertScaleAbs(bgr, alpha=alpha, beta=beta)
         return adjusted
+
+    def apply_clarity(self, frame: np.ndarray, amount: float = 0.4) -> np.ndarray:
+        """
+        Studio-grade unsharp mask for razor-sharp 4K / 1080p clarity.
+        """
+        blurred = cv2.GaussianBlur(frame, (0, 0), 3)
+        sharp = cv2.addWeighted(frame, 1.0 + amount, blurred, -amount, 0)
+        return np.clip(sharp, 0, 255).astype(np.uint8)
 
     def apply_lut_to_frame(self, frame: np.ndarray) -> np.ndarray:
         """
@@ -133,36 +141,31 @@ class ColorGrader:
         if self.lut_table is None:
             return frame
 
-        # frame is BGR uint8
         b = frame[:, :, 0]
         g = frame[:, :, 1]
         r = frame[:, :, 2]
 
         scale = (self.lut_size - 1) / 255.0
-        # Map BGR to indices
         b_idx = np.clip(np.round(b * scale).astype(np.int32), 0, self.lut_size - 1)
         g_idx = np.clip(np.round(g * scale).astype(np.int32), 0, self.lut_size - 1)
         r_idx = np.clip(np.round(r * scale).astype(np.int32), 0, self.lut_size - 1)
 
-        # In Cube table reshaped as (B, G, R, 3), lookup yields [R, G, B] normalized 0..1
         out_rgb = self.lut_table[b_idx, g_idx, r_idx]
-        out_bgr = out_rgb[:, :, ::-1]  # Convert RGB to BGR
+        out_bgr = out_rgb[:, :, ::-1]
         graded = np.clip(out_bgr * 255.0, 0, 255).astype(np.uint8)
         return graded
 
-    def apply_vignette(self, frame: np.ndarray, strength: float = 0.25) -> np.ndarray:
+    def apply_vignette(self, frame: np.ndarray, strength: float = 0.12) -> np.ndarray:
         """
-        Applies a subtle cinematic vignette (darkened rounded corners).
+        Very soft optional cinematic vignette (disabled by default for clean look).
         """
         h, w = frame.shape[:2]
         if self._cached_mask_shape != (h, w) or self._cached_vignette_mask is None:
-            # Generate radial gradient mask
             Y, X = np.ogrid[:h, :w]
             cx, cy = w / 2.0, h / 2.0
             max_dist = np.sqrt(cx ** 2 + cy ** 2)
             dist = np.sqrt((X - cx) ** 2 + (Y - cy) ** 2) / max_dist
-            # Quadratic falloff starting after 50% radius
-            falloff = np.clip((dist - 0.4) / 0.6, 0.0, 1.0)
+            falloff = np.clip((dist - 0.5) / 0.5, 0.0, 1.0)
             mask = 1.0 - (strength * (falloff ** 2))
             self._cached_vignette_mask = np.dstack([mask, mask, mask]).astype(np.float32)
             self._cached_mask_shape = (h, w)
@@ -170,18 +173,15 @@ class ColorGrader:
         vignetted = (frame.astype(np.float32) * self._cached_vignette_mask)
         return np.clip(vignetted, 0, 255).astype(np.uint8)
 
-    def apply_film_grain(self, frame: np.ndarray, strength: float = 0.03) -> np.ndarray:
+    def apply_film_grain(self, frame: np.ndarray, strength: float = 0.015) -> np.ndarray:
         """
-        Fast 35mm film grain overlay using cached Gaussian noise pattern.
-        Runs 500x faster than per-frame random allocation.
+        Optional film grain (disabled by default for clean modern footage).
         """
         h, w, c = frame.shape
         if not hasattr(self, "_grain_cache") or self._grain_cache is None or self._grain_cache.shape[:2] != (h, w):
             sigma = strength * 255.0
-            # Generate cached noise matching frame dimensions once
             self._grain_cache = np.random.normal(0, sigma, (h, w, c)).astype(np.float32)
 
-        # Fast vector addition
         grainy = frame.astype(np.float32) + self._grain_cache
         return np.clip(grainy, 0, 255).astype(np.uint8)
 
@@ -192,11 +192,12 @@ class ColorGrader:
         apply_exposure: bool = True,
         apply_lut: bool = True,
         apply_boost: bool = True,
-        apply_vignette_fx: bool = True,
-        apply_grain_fx: bool = True,
+        apply_clarity_fx: bool = True,
+        apply_vignette_fx: bool = False,
+        apply_grain_fx: bool = False,
     ) -> np.ndarray:
         """
-        Execute complete cinematic color grading pipeline on an individual frame.
+        Execute clean studio color enhancement and sharpening on an individual frame.
         """
         out = frame
         if apply_wb:
@@ -204,13 +205,15 @@ class ColorGrader:
         if apply_exposure:
             out = self.auto_exposure_clahe(out)
         if apply_boost:
-            out = self.boost_saturation_contrast(out, sat_boost=0.15, cont_boost=0.10)
+            out = self.boost_saturation_contrast(out, sat_boost=0.07, cont_boost=0.04)
         if apply_lut and self.lut_table is not None:
             out = self.apply_lut_to_frame(out)
+        if apply_clarity_fx:
+            out = self.apply_clarity(out, amount=0.35)
         if apply_vignette_fx:
-            out = self.apply_vignette(out, strength=0.22)
+            out = self.apply_vignette(out, strength=0.10)
         if apply_grain_fx:
-            out = self.apply_film_grain(out, strength=0.03)
+            out = self.apply_film_grain(out, strength=0.01)
         return out
 
 

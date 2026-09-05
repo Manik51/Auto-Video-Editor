@@ -3,6 +3,15 @@ AutoVideoEditor Package
 Production-grade automated AI video editing framework for Google Colab and local environments.
 """
 
+import sys
+
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 __version__ = "1.0.0"
 __author__ = "AutoVideoEditor Team"
 

@@ -124,7 +124,10 @@ class VideoPipeline:
         """Write message to memory log and terminal."""
         entry = f"[{time.strftime('%H:%M:%S')}] {message}"
         self.log_records.append(entry)
-        print(entry)
+        try:
+            print(entry)
+        except UnicodeEncodeError:
+            print(entry.encode("ascii", errors="replace").decode("ascii"))
 
     def _update_progress(self, percent: float, description: str) -> None:
         """Emit progress update to UI callback and log."""
@@ -233,51 +236,70 @@ class VideoPipeline:
         # -------------------------------------------------------------
         # STAGE 4: Color grading & LUT application (55%)
         # -------------------------------------------------------------
-        self._update_progress(55.0, "Applying cinematic color grading and 3D LUT...")
+        # STAGE 4: Color grading & Studio Clarity (55%)
+        # -------------------------------------------------------------
+        self._update_progress(55.0, "Enhancing video colors and studio clarity...")
         do_color = self.options.get("color_grade", True)
-        lut_name = self.preset_data.get("color_lut", "warm_golden.cube")
+        color_look = self.options.get("color_look", "Clean & Crisp (Studio HD)")
+
+        # Map color look style to professional 3D LUT
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        lut_path = os.path.join(base_dir, "luts", lut_name)
+        lut_mapping = {
+            "Clean & Crisp (Studio HD)": "clean_studio.cube",
+            "Vibrant Pop (Social Media / Reels)": "vibrant_pop.cube",
+            "Cinematic Film (Hollywood Style)": "cinematic_orange_teal.cube",
+            "Warm Golden Hour": "warm_golden.cube",
+            "Original / Natural (Untouched)": None,
+        }
+
+        if "color_look" in self.options:
+            lut_name = lut_mapping.get(color_look, "clean_studio.cube")
+        else:
+            lut_name = self.preset_data.get("color_lut", "clean_studio.cube")
+
+        lut_path = os.path.join(base_dir, "luts", lut_name) if lut_name else None
 
         is_reels = "reels" in self.preset_data.get("name", "").lower() or self.preset_data.get("aspect_ratio") == "9:16"
         target_res = tuple(self.preset_data.get("resolution", [1920, 1080]))
         target_w, target_h = (1080, 1920) if is_reels else target_res
 
         graded_video = os.path.join(self.temp_dir, "color_graded.mp4")
-        if do_color:
-            self._log(f"🎨 Applying LUT: {lut_name} (Cinematic 3D LUT, Dynamic Film Grain, Contrast & Vignette)")
+        if not do_color or color_look == "Original / Natural (Untouched)" or not lut_path or not os.path.exists(lut_path):
+            self._log("🎨 Color grading bypassed: 100% original camera colors preserved.")
+        else:
+            self._log(f"🎨 Applying Studio Enhancement: {color_look or lut_name} (Crisp 4K/1080p Clarity, Zero Artificial Noise)")
             graded_ok = False
 
-            # FAST PATH: Hardware-accelerated FFmpeg native lut3d filter (runs in 3-5 seconds)
+            # FAST PATH: Hardware-accelerated FFmpeg native lut3d + unsharp clarity filter (runs in 2-4 seconds)
             ffmpeg_bin = shutil.which("ffmpeg") or "ffmpeg"
-            if os.path.exists(lut_path):
-                try:
-                    lut_norm = lut_path.replace("\\", "/")
-                    if ":" in lut_norm:
-                        d, r = lut_norm.split(":", 1)
-                        lut_norm = f"{d}\\:{r}"
-                    vf_lut = (
-                        f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2,"
-                        f"lut3d=file='{lut_norm}':interp=trilinear,"
-                        f"eq=contrast=1.12:brightness=-0.01:saturation=1.18,"
-                        f"vignette=PI/4,"
-                        f"noise=c1s=3:c0s=3:allf=t+u"
-                    )
-                    cmd = [
-                        ffmpeg_bin, "-y",
-                        "-i", current_video,
-                        "-vf", vf_lut,
-                        "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
-                        "-c:a", "copy",
-                        graded_video,
-                    ]
-                    res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-                    if res.returncode == 0 and os.path.exists(graded_video) and os.path.getsize(graded_video) > 1000:
-                        current_video = graded_video
-                        graded_ok = True
-                        self._log("  ⚡ High-Speed Hardware LUT applied in seconds via FFmpeg!")
-                except Exception as e:
-                    self._log(f"ℹ️ FFmpeg fast LUT notice: {e}. Using frame processor...")
+            try:
+                lut_norm = lut_path.replace("\\", "/")
+                if ":" in lut_norm:
+                    d, r = lut_norm.split(":", 1)
+                    lut_norm = f"{d}\\:{r}"
+                
+                # Crisp studio chain: Scale -> 3D LUT -> Studio Unsharp Clarity
+                # ZERO artificial noise, ZERO heavy vignette tunnel!
+                vf_lut = (
+                    f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2,"
+                    f"lut3d=file='{lut_norm}':interp=trilinear,"
+                    f"unsharp=5:5:0.6:5:5:0.0"
+                )
+                cmd = [
+                    ffmpeg_bin, "-y",
+                    "-i", current_video,
+                    "-vf", vf_lut,
+                    "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+                    "-c:a", "copy",
+                    graded_video,
+                ]
+                res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                if res.returncode == 0 and os.path.exists(graded_video) and os.path.getsize(graded_video) > 1000:
+                    current_video = graded_video
+                    graded_ok = True
+                    self._log("  ⚡ Pristine Studio Enhancement applied in seconds via FFmpeg!")
+            except Exception as e:
+                self._log(f"ℹ️ FFmpeg LUT notice: {e}. Using frame processor...")
 
             # FALLBACK PATH: OpenCV frame processor with live granular progress updates
             if not graded_ok:
@@ -293,7 +315,6 @@ class VideoPipeline:
                         ret, frame = cap.read()
                         if not ret:
                             break
-                        # Pre-scale to target resolution for 4x-8x faster processing
                         if (frame.shape[1], frame.shape[0]) != (target_w, target_h):
                             frame = cv2.resize(frame, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
 
@@ -303,29 +324,28 @@ class VideoPipeline:
                             apply_exposure=True,
                             apply_lut=(grader.lut_table is not None),
                             apply_boost=True,
-                            apply_vignette_fx=True,
-                            apply_grain_fx=True,
+                            apply_clarity_fx=True,
+                            apply_vignette_fx=False,
+                            apply_grain_fx=False,
                         )
                         writer.write(processed_frame)
                         frame_count += 1
 
-                        if frame_count % 20 == 0:
+                        if frame_count % 25 == 0:
                             p = 55.0 + (frame_count / max(1, tot_f)) * 14.0
-                            self._update_progress(p, f"Color grading... frame {frame_count}/{tot_f} ({int(p)}%)")
+                            self._update_progress(p, f"Enhancing color clarity... frame {frame_count}/{tot_f}")
 
                     cap.release()
                     writer.release()
 
                     if os.path.exists(graded_video) and os.path.getsize(graded_video) > 1000:
                         current_video = graded_video
-                        self._log(f"  ✅ Graded {frame_count} frames successfully.")
+                        self._log(f"  ✅ Enhanced {frame_count} frames successfully.")
                     else:
                         self.warnings.append("Color grading write failed; falling back to previous video.")
                 except Exception as e:
                     self.warnings.append(f"Color grading step encountered error: {e}. Continued.")
                     self._log(f"⚠️ Color grade error: {traceback.format_exc()}")
-        else:
-            self._log("ℹ️ Skipping color grading (option disabled).")
 
         # -------------------------------------------------------------
         # STAGE 5: Adding dynamic effects & transitions (70%)

@@ -2,7 +2,7 @@
   "name": "YouTube Vlog",
   "aspect_ratio": "16:9",
   "resolution": [1920, 1080],
-  "color_lut": "warm_golden.cube",
+  "color_lut": "clean_studio.cube",
   "silence_threshold_db": -40,
   "min_scene_duration": 1.5,
   "transition_style": "cross_dissolve",

@@ -2,7 +2,7 @@
   "name": "Instagram Reels",
   "aspect_ratio": "9:16",
   "resolution": [1080, 1920],
-  "color_lut": "cinematic_orange_teal.cube",
+  "color_lut": "clean_studio.cube",
   "silence_threshold_db": -38,
   "min_scene_duration": 1.0,
   "max_duration_seconds": 90,
